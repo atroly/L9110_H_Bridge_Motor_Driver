@@ -5,8 +5,9 @@
 */
 
 #define SECONDS 10      // seconds to run for each step in sequence
-#define DEFAULT_PWM 196 // default duty cycle (255=full speed)
+#define DEFAULT_PWM 192 // default duty cycle (255=full speed)
 #define STOP_DELAY 1000 // motor stop time in ms before reversing
+#define MOTOR_COUNT 2   // number of motors to control
 
 // Motor control pins
 #define A_DIR 2   // A_IB
@@ -18,71 +19,75 @@
 #define A_RUN 6 // connect to Gnd to stop motor A
 #define B_RUN 7 // connect to Gnd to stop motor B
 
-enum motor  { A, B };
 enum action { FORWARD, REVERSE, STOP };
 
-action sequence[] = { FORWARD, STOP, REVERSE, STOP };
-action current_action = STOP;
+// Sequence of actions for motors
+action const sequence[] = { FORWARD, STOP, REVERSE, STOP };
 
-int seq_count = sizeof(sequence)/sizeof(sequence[0]);
-int current_seq = 0;
-// ensure if() condition is true on startup
-unsigned long previousTime = millis() - 1000 * SECONDS; 
-boolean A_prev_state = LOW;
-boolean B_prev_state = LOW;
+int const seq_count = sizeof(sequence)/sizeof(sequence[0]);
+
+struct motors {
+    byte dir_pin;
+    byte pwm_pin;
+    byte run_pin;
+    boolean state;
+    boolean prev_state;
+};
+
+motors motor[] = {
+    {A_DIR, A_PWM, A_RUN, HIGH, LOW}, 
+    {B_DIR, B_PWM, B_RUN, HIGH, LOW}
+};
 
 void setup() {
-    pinMode(A_DIR, OUTPUT);
-    pinMode(A_PWM, OUTPUT);
-    pinMode(B_DIR, OUTPUT);
-    pinMode(B_PWM, OUTPUT);
-    pinMode(A_RUN, INPUT_PULLUP);
-    pinMode(B_RUN, INPUT_PULLUP);
-}
+    for (int m=0; m<MOTOR_COUNT; m++) {
+        pinMode(motor[m].dir_pin, OUTPUT);
+        pinMode(motor[m].pwm_pin, OUTPUT);
+        pinMode(motor[m].run_pin, INPUT_PULLUP);
+    }
+ }
  
 void loop() {
-    boolean A_state = digitalRead(A_RUN);
-    boolean B_state = digitalRead(B_RUN);
-    // act on changed motor A control input pin
-    if (A_prev_state != A_state) {
-        A_prev_state = A_state;
-        motorCtrl(A, current_action, A_state);
-    }
-    // act on changed motor B control input pin
-    if (B_prev_state != B_state) {
-        B_prev_state = B_state;
-        motorCtrl(B, current_action, B_state);
+    static action current_action = STOP;
+    // acted on changed motor run pin
+    for (int m=0; m<MOTOR_COUNT; m++) {
+        motor[m].state = digitalRead(motor[m].run_pin);
+        if (motor[m].prev_state != motor[m].state) {
+            motor[m].prev_state = motor[m].state;
+            motorCtrl(m, current_action); 
+        }
     }
     // if defined time has elapsed, advance to the next action
+    static unsigned long previousTime = millis() - 1000 * SECONDS;
+    static int current_seq = 0;
     unsigned long currentTime = millis();
     if (currentTime - previousTime >= 1000*SECONDS) {
         previousTime = currentTime;
         current_action = sequence[current_seq];
         if (++current_seq == seq_count) current_seq = 0;
-        motorCtrl(A, current_action, A_state);
-        motorCtrl(B, current_action, B_state);
+        for (int m=0; m<MOTOR_COUNT; m++) {
+            motorCtrl(m, current_action);
+        }
     }
 }
    
-void motorCtrl(motor m, action a, boolean state) {
-    byte dir = (m==A) ? A_DIR : B_DIR;
-    byte pwm = (m==A) ? A_PWM : B_PWM;
-    if (state == LOW) a = STOP;
+void motorCtrl(int m, action a) {
+    if (motor[m].state == LOW) a = STOP;
     switch(a) {
         case STOP:
-            digitalWrite(dir, LOW);
-            digitalWrite(pwm, LOW);
+            digitalWrite(motor[m].dir_pin, LOW);
+            digitalWrite(motor[m].pwm_pin, LOW);
             delay(STOP_DELAY);
             break; 
         case FORWARD:
-            motorCtrl(m, STOP, LOW);
-            digitalWrite(dir, HIGH);
-            analogWrite(pwm, 255-DEFAULT_PWM);
+            motorCtrl(m, STOP);
+            digitalWrite(motor[m].dir_pin, HIGH);
+            analogWrite(motor[m].pwm_pin, 255-DEFAULT_PWM);
             break;
         case REVERSE:
-            motorCtrl(m, STOP, LOW);
-            digitalWrite(dir, LOW);
-            analogWrite(pwm, DEFAULT_PWM);
+            motorCtrl(m, STOP);
+            digitalWrite(motor[m].dir_pin, LOW);
+            analogWrite(motor[m].pwm_pin, DEFAULT_PWM);
             break;       
     }
 }
